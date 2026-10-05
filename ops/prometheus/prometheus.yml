@@ -1,0 +1,31 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # The services run on the host, not in Docker, so they are scraped through the gateway alias.
+  # If you run them in containers instead, swap host.docker.internal for the service name.
+  - job_name: wallet-api
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+        labels:
+          service: wallet-api
+
+  - job_name: notification-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8081"]
+        labels:
+          service: notification-service
+
+  - job_name: fraud-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8082"]
+        labels:
+          service: fraud-service
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
