@@ -1,0 +1,183 @@
+### kafka-wallet — runnable request collection
+# IntelliJ HTTP Client or the VS Code "REST Client" extension.
+# Run them top to bottom; later requests reuse ids captured from earlier ones.
+
+@wallet = http://localhost:8080
+@notifications = http://localhost:8081
+@fraud = http://localhost:8082
+
+### Open Alice's account
+# @name openAlice
+POST {{wallet}}/accounts
+Content-Type: application/json
+
+{
+  "ownerName": "Alice",
+  "initialBalance": "1000.00",
+  "currency": "BRL"
+}
+
+> {% client.global.set("alice", response.body.id); %}
+
+### Open Bob's account
+# @name openBob
+POST {{wallet}}/accounts
+Content-Type: application/json
+
+{
+  "ownerName": "Bob",
+  "initialBalance": "0.00",
+  "currency": "BRL"
+}
+
+> {% client.global.set("bob", response.body.id); %}
+
+### Transfer — expect 201 Created
+# @name transfer
+POST {{wallet}}/transfers
+Content-Type: application/json
+Idempotency-Key: demo-001
+
+{
+  "fromAccountId": "{{alice}}",
+  "toAccountId": "{{bob}}",
+  "amount": "150.00",
+  "currency": "BRL"
+}
+
+> {% client.global.set("transferId", response.body.transferId); %}
+
+### Replay the exact same request — expect 200 OK, same transferId, no money moved
+POST {{wallet}}/transfers
+Content-Type: application/json
+Idempotency-Key: demo-001
+
+{
+  "fromAccountId": "{{alice}}",
+  "toAccountId": "{{bob}}",
+  "amount": "150.00",
+  "currency": "BRL"
+}
+
+### Same key, different amount — expect 409 Conflict (idempotency-key-reused)
+POST {{wallet}}/transfers
+Content-Type: application/json
+Idempotency-Key: demo-001
+
+{
+  "fromAccountId": "{{alice}}",
+  "toAccountId": "{{bob}}",
+  "amount": "151.00",
+  "currency": "BRL"
+}
+
+### Alice's balance — expect 850.0000
+GET {{wallet}}/accounts/{{alice}}
+
+### Bob's balance — expect 150.0000
+GET {{wallet}}/accounts/{{bob}}
+
+### Alice's ledger — one DEBIT per transfer she sent
+GET {{wallet}}/accounts/{{alice}}/ledger?limit=20
+
+### Bob's ledger — the matching CREDIT
+GET {{wallet}}/accounts/{{bob}}/ledger?limit=20
+
+### The transfer itself
+GET {{wallet}}/transfers/{{transferId}}
+
+### Overdraft — expect 422 (insufficient-funds)
+POST {{wallet}}/transfers
+Content-Type: application/json
+Idempotency-Key: demo-overdraft
+
+{
+  "fromAccountId": "{{alice}}",
+  "toAccountId": "{{bob}}",
+  "amount": "999999.00",
+  "currency": "BRL"
+}
+
+### Transfer to self — expect 422 (same-account-transfer)
+POST {{wallet}}/transfers
+Content-Type: application/json
+Idempotency-Key: demo-self
+
+{
+  "fromAccountId": "{{alice}}",
+  "toAccountId": "{{alice}}",
+  "amount": "10.00",
+  "currency": "BRL"
+}
+
+### More than 4 decimal places — expect 400 from bean validation
+POST {{wallet}}/transfers
+Content-Type: application/json
+Idempotency-Key: demo-precision
+
+{
+  "fromAccountId": "{{alice}}",
+  "toAccountId": "{{bob}}",
+  "amount": "10.000001",
+  "currency": "BRL"
+}
+
+### Missing Idempotency-Key — expect 400
+POST {{wallet}}/transfers
+Content-Type: application/json
+
+{
+  "fromAccountId": "{{alice}}",
+  "toAccountId": "{{bob}}",
+  "amount": "10.00",
+  "currency": "BRL"
+}
+
+### Above the fraud threshold — watch fraud.alert in the Kafka UI
+POST {{wallet}}/transfers
+Content-Type: application/json
+Idempotency-Key: demo-big-{{$timestamp}}
+
+{
+  "fromAccountId": "{{bob}}",
+  "toAccountId": "{{alice}}",
+  "amount": "10000.00",
+  "currency": "BRL"
+}
+
+### How many notifications were sent — one per transfer, never two
+GET {{notifications}}/notifications/count
+
+### Notifications for one transfer
+GET {{notifications}}/notifications/by-transfer/{{transferId}}
+
+### --- Observability ---
+
+### Outbox backlog — 0 when the relay has caught up
+GET {{wallet}}/actuator/metrics/wallet.outbox.backlog
+
+### Transfers created vs. replayed
+GET {{wallet}}/actuator/metrics/wallet.transfers
+
+### Consumer outcomes: processed / duplicate / dead-lettered
+GET {{notifications}}/actuator/metrics/notification.events
+
+### Health of each service
+GET {{wallet}}/actuator/health
+
+###
+GET {{notifications}}/actuator/health
+
+###
+GET {{fraud}}/actuator/health
+
+### --- Failure injection (needs notification.failure-injection.enabled=true) ---
+
+### Fail every delivery — the message ends up in transfer.completed.dlq
+POST {{notifications}}/test/failure-injection?mode=ALWAYS
+
+### Fail twice then succeed — retry recovering
+POST {{notifications}}/test/failure-injection?mode=TRANSIENT&times=2
+
+### Back to normal
+POST {{notifications}}/test/failure-injection?mode=NONE
