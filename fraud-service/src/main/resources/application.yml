@@ -1,0 +1,60 @@
+spring:
+  application:
+    name: fraud-service
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    streams:
+      # The application id is the identity of the whole topology: it names the consumer group, it
+      # prefixes the internal changelog and repartition topics, and it decides which instances
+      # share state. Changing it starts over with an empty store.
+      application-id: fraud-service
+      properties:
+        # Where the windowed counts live between polls. Outside a container this must be a
+        # directory that survives restarts, or every restart rebuilds state from the changelog.
+        state.dir: ${STREAMS_STATE_DIR:/tmp/kafka-streams}
+        # One unparseable message should not take the topology down. The record is logged and
+        # skipped; LogAndFail would be right for a system where silently losing input is worse
+        # than an outage.
+        deserialization.exception.handler: org.apache.kafka.streams.errors.LogAndContinueExceptionHandler
+        # Single broker in the demo compose file. Three in anything real.
+        replication.factor: 1
+        # How often results are forwarded downstream. Lower means fresher windowed counts and more
+        # intermediate records; this is the knob that decides how quickly a velocity alert appears.
+        commit.interval.ms: 1000
+        # Disables record caching so window updates surface immediately. Good for a demo and for
+        # tests; in production the cache is what keeps the downstream volume sane.
+        statestore.cache.max.bytes: 0
+        num.stream.threads: 3
+
+server:
+  port: ${SERVER_PORT:8082}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  health:
+    # Surfaces the Streams state (RUNNING / REBALANCING / ERROR) in /actuator/health.
+    kafka:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+fraud:
+  rules:
+    # Quoted: YAML would otherwise parse this as a float and the BigDecimal would arrive as
+    # 10000.0, losing the scale that makes it read as money in the alert text.
+    amount-threshold: "10000.0000"
+    velocity-window: 1m
+    velocity-max-transfers: 5
+
+logging:
+  level:
+    dev.aleck.fraud: INFO
+    org.apache.kafka.streams: WARN
