@@ -1,0 +1,81 @@
+spring:
+  application:
+    name: notification-service
+
+  datasource:
+    # Its own database, not just its own tables. A service that cannot reach another service's
+    # data cannot grow a hidden dependency on its schema — the event is the only contract.
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:notifications}
+    username: ${POSTGRES_USER:wallet}
+    password: ${POSTGRES_PASSWORD:wallet}
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # No silent fast-forwarding past events that were produced while this service was down.
+      # 'latest' would make a cold start lose history; 'earliest' replays it, which is safe
+      # precisely because the consumer is idempotent.
+      auto-offset-reset: earliest
+      # The single most important consumer setting here. With auto-commit the offset advances on a
+      # timer, independently of whether processing succeeded — crash at the wrong moment and the
+      # event is gone. Off means the container commits only after the listener returns normally.
+      enable-auto-commit: false
+      properties:
+        # Bound the work one poll can hand to the listener. Too high and a slow batch trips
+        # max.poll.interval.ms, which looks like a dead consumer and triggers a rebalance.
+        max.poll.records: 50
+    producer:
+      # Only used by the dead letter publisher.
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+    listener:
+      # Commit after each record. Slightly chattier than BATCH, and much easier to reason about:
+      # the committed offset never runs ahead of the work actually done.
+      ack-mode: RECORD
+      # Needed for the retry listener to report which attempt failed.
+      observation-enabled: false
+
+server:
+  port: ${SERVER_PORT:8081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+notification:
+  consumer:
+    # The group id *is* the identity of the consumer. Change it and the service replays the topic
+    # from the beginning as a brand new group; keep it and it resumes where it left off.
+    group-id: notification-service
+    # One thread per partition. More would idle; fewer would leave partitions sharing a thread.
+    concurrency: 3
+    retry:
+      initial-interval: 500ms
+      multiplier: 2.0
+      max-interval: 10s
+      # Retries after the first delivery, not total attempts: 5 deliveries in all, with roughly
+      # 0.5s + 1s + 2s + 4s of waiting before the record is dead-lettered.
+      max-attempts: 4
+  failure-injection:
+    enabled: false
+
+logging:
+  level:
+    dev.aleck.notification: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{eventId:-}] %logger{36} - %msg%n"
