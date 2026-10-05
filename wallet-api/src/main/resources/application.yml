@@ -1,0 +1,96 @@
+spring:
+  application:
+    name: wallet-api
+
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:wallet}
+    username: ${POSTGRES_USER:wallet}
+    password: ${POSTGRES_PASSWORD:wallet}
+    hikari:
+      # The relay and the request threads share this pool. Sized above the Tomcat thread count is
+      # pointless; sized below it turns contention into connection waits.
+      maximum-pool-size: 20
+
+  jpa:
+    # Off deliberately: with it on, a lazy association can be loaded from a view/serialiser long
+    # after the service returned, which hides N+1 queries and keeps connections open.
+    open-in-view: false
+    hibernate:
+      # Flyway owns the schema. 'validate' turns a drifted entity into a startup failure instead
+      # of a confusing runtime error.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+          batch_size: 25
+        order_inserts: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Events are published as plain JSON strings. Spring's JsonSerializer would work too, but it
+      # stamps Java type headers into the message, which quietly couples consumers to this
+      # module's class names. A JSON string is a contract any language can read.
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Wait for all in-sync replicas. With acks=1 a leader crash right after acknowledging loses
+      # the event, and the outbox row is already marked published — the one hole the pattern cannot
+      # patch.
+      acks: all
+      properties:
+        # Exactly-once *per producer session*: the broker dedupes retries by sequence number, so a
+        # retry caused by a timeout no longer appends the event twice.
+        enable.idempotence: true
+        # Safe to keep above 1 while idempotence is on; the broker restores order by sequence.
+        max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 120000
+        linger.ms: 5
+        # How long send() itself may block waiting for cluster metadata or buffer space.
+        #
+        # The default is 60s, and that default is wrong here. The relay publishes from inside a
+        # database transaction, so a blocked send() holds that transaction — and the rows it
+        # locked — for as long as it blocks. With the broker down, a 60s block means a 60s
+        # transaction per tick, and the batch never even reaches the relay's own 10s send-timeout
+        # to be failed and retried. Five seconds makes the failure arrive promptly, the
+        # transaction roll back, and attempts/last_error get recorded.
+        max.block.ms: 5000
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+wallet:
+  outbox:
+    batch-size: 100
+    send-timeout: 10s
+    # Polling latency is the floor on end-to-end event delay. 500ms is a deliberate compromise:
+    # low enough to feel instant in a demo, high enough not to hammer the database when idle.
+    poll-interval: 500
+    initial-delay: 1000
+  transfer:
+    max-attempts: 5
+    backoff-base-millis: 20
+
+logging:
+  level:
+    dev.aleck.wallet: INFO
+  pattern:
+    # transferId / eventId are put in the MDC at the edges so one transfer can be followed across
+    # services by grepping a single id.
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{transferId:-}%X{eventId:-}] %logger{36} - %msg%n"
