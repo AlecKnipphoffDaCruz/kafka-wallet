@@ -1,0 +1,27 @@
+target/
+!.mvn/wrapper/maven-wrapper.jar
+.mvn/.gradle-enterprise/
+.mvn/.develocity/
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+nbproject/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local overrides — never commit credentials
+.env
+*-local.yml
+application-local.*
+
+# Kafka Streams local state
+/tmp/kafka-streams/
