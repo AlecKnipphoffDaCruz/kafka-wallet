@@ -44,6 +44,11 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
+    <dependency>
+      <!-- Swagger UI at /swagger-ui.html, OpenAPI document at /v3/api-docs. -->
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+    </dependency>
 
     <dependency>
       <groupId>io.micrometer</groupId>

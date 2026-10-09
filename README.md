@@ -100,6 +100,7 @@ watching the outbox hold the line — which is much easier when they are process
 | Kafka UI | http://localhost:8089 |
 | Grafana (anonymous, dashboard `kafka-wallet`) | http://localhost:3000 |
 | Prometheus | http://localhost:9090 |
+| Swagger UI | http://localhost:8080/swagger-ui.html (wallet-api), http://localhost:8081/swagger-ui.html (notification-service) |
 | Actuator | `/actuator/health`, `/actuator/prometheus` on each service |
 
 ### A full walkthrough
